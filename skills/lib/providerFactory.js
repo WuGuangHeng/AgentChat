@@ -304,8 +304,14 @@ async function waitForCompletion(page, config, startTime, timeoutMs) {
             if (!appeared) continue; // this selector never matched — try the next one
 
             if (stopMode === 'detached') {
-                // Qwen: stop button is removed from DOM when done, not just hidden
-                await stopBtn.waitFor({ state: 'detached', timeout: Math.min(timeoutMs, 300000) }).catch(() => {});
+                // Qwen: stop button is removed from DOM when done, not just hidden.
+                // BUGFIX: previously used a flat Math.min(timeoutMs, 300000) here,
+                // ignoring time already spent on nav/quota/editor/input/send + the
+                // probe above — could let this single phase overrun the provider's
+                // remaining budget. Now mirrors the 'hidden' branch below.
+                const cap = Math.min(timeoutMs, 300000);
+                const remaining = Math.max(30000, cap - (Date.now() - startTime));
+                await stopBtn.waitFor({ state: 'detached', timeout: remaining }).catch(() => {});
             } else {
                 const remaining = Math.max(30000, timeoutMs - (Date.now() - startTime));
                 await stopBtn.waitFor({ state: 'hidden', timeout: remaining }).catch(() => {});
@@ -466,11 +472,18 @@ async function checkOverlays(page, C) {
             return { block: 'auth', detail: text.slice(0, 120) };
         }
 
-        // Soft block: dismissable overlay
+        // Soft block: try to dismiss. Known-dismissable overlays (matched against
+        // C.dismissPatterns) are expected to close cleanly via CLOSE_BTN_SEL;
+        // unrecognized overlays are still attempted best-effort (matches the
+        // "unknown → try close, if still present → block" policy above), but are
+        // now labeled distinctly so failures are easier to diagnose from logs.
+        // BUGFIX: previously `dismissable ? 'error' : 'error'` — both branches
+        // returned the same value, so `dismissable` was computed and discarded.
         const dismissable = (C.dismissPatterns || []).some(p => p.test(text));
         const dismissed = await tryDismissOverlay(page, el);
         if (!dismissed) {
-            return { block: dismissable ? 'error' : 'error', detail: 'overlay stuck: ' + text.slice(0, 120) };
+            const kind = dismissable ? 'known overlay' : 'unrecognized overlay';
+            return { block: 'error', detail: `${kind} stuck: ${text.slice(0, 120)}` };
         }
         return { block: null }; // dismissed, continue
     }

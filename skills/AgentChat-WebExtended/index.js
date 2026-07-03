@@ -13,6 +13,9 @@
  *   node index.js --smoke          # verify at least one provider reachable
  *   node index.js --doctor         # check CDP connectivity only
  *   node index.js --from=ChatGPT   # start from a specific provider
+ *   node index.js --from=Claude --single "..."  # try ONLY Claude, no cascade
+ *                                   # (used by AgentChat-FreeSubAgent, which owns
+ *                                   # its own cross-provider fallback + locking)
  *
  * Exit codes:
  *   0 - Success (response on stdout)
@@ -142,7 +145,7 @@ function isProviderTabOpen(context, provider) {
  * @param {Browser} browser - CDP browser connection
  * @param {string} prompt - The prompt to send
  * @param {InvocationContext} ctx - Per-invocation context (telemetry)
- * @param {object} options - { totalTimeout, providerTimeout, startFrom }
+ * @param {object} options - { totalTimeout, providerTimeout, startFrom, singleAttempt }
  * @returns {{success: true, response: string, provider: string}} | {{success: false, reasons: object}}
  */
 async function tryAllProviders(browser, prompt, ctx, options = {}) {
@@ -174,7 +177,16 @@ async function tryAllProviders(browser, prompt, ctx, options = {}) {
     const fallbackReasons = {};
     const triedProviders = [];
 
-    for (let i = startIdx; i < PROVIDER_CHAIN.length; i++) {
+    // singleAttempt: bound the loop to exactly one provider (startIdx) instead of
+    // cascading through the rest of PROVIDER_CHAIN on failure. Used by callers
+    // (e.g. AgentChat-FreeSubAgent) that implement their own cross-provider
+    // fallback with external locking — without this, a single spawned attempt at
+    // provider X could silently succeed via provider Y further down the chain,
+    // while the caller's lock is only held on X, breaking mutual exclusion between
+    // concurrent orchestrator workers that expect exclusive use of Y.
+    const endIdx = options.singleAttempt ? Math.min(startIdx + 1, PROVIDER_CHAIN.length) : PROVIDER_CHAIN.length;
+
+    for (let i = startIdx; i < endIdx; i++) {
         const provider = PROVIDER_CHAIN[i];
         const elapsed = Date.now() - overallStart;
         const remainingTotal = totalTimeout - elapsed;
@@ -331,12 +343,18 @@ async function main() {
     let customProvTimeout = null;
     let startFrom = null;
     let keepTabs = true; // Always keep tabs — never close user's browser
+    let singleAttempt = false; // --single: try exactly one provider, no cascade
 
+    // NOTE: --doctor is already handled above with an early return, so it never
+    // reaches this loop. --smoke is detected separately via args.includes('--smoke')
+    // further below. Neither should be pushed into `remaining` — previously both
+    // were, which meant they'd get joined into the `prompt` string (harmless today
+    // only because the smoke/doctor branches short-circuit before `prompt` is used).
     const remaining = [];
     for (let i = 0; i < args.length; i++) {
         const a = args[i];
-        if (a === '--smoke' || a === '--doctor') {
-            remaining.push(a); // keep flag
+        if (a === '--smoke') {
+            // handled via args.includes('--smoke') below — swallow, don't push
         } else if (a.startsWith('--timeout=')) {
             const v = parseInt(a.split('=')[1], 10);
             if (!isNaN(v) && v > 0) customTimeout = v;
@@ -348,6 +366,8 @@ async function main() {
         } else if (a === '--close' || a === '--close-browser') {
             // Only closes our own tab on success (page.close()) — never browser.close().
             keepTabs = false;
+        } else if (a === '--single') {
+            singleAttempt = true;
         } else if (a.startsWith('--from=')) {
             startFrom = a.split('=')[1];
         } else if (!a.startsWith('--')) {
@@ -365,7 +385,7 @@ async function main() {
         prompt = chunks.join('').trim();
     }
     if (!prompt && !args.includes('--smoke')) {
-        console.error('Usage: node index.js [--timeout=N] [--from=NAME] [--keep-tabs] [--close] [--smoke] [--doctor] "Your prompt"');
+        console.error('Usage: node index.js [--timeout=N] [--from=NAME] [--single] [--keep-tabs] [--close] [--smoke] [--doctor] "Your prompt"');
         console.error('       echo "prompt" | node index.js [flags]');
         process.exit(1);
     }
@@ -396,6 +416,7 @@ async function main() {
             providerTimeout: customProvTimeout,
             startFrom,
             keepTabs,
+            singleAttempt,
         });
 
         if (result.success) {

@@ -1,8 +1,13 @@
 # AI Fallback Chain — Multi-Provider CDP Bridge
 
-> **最后更新**: 2026-07-02
+> **最后更新**: 2026-07-03
 > **核心功能**: 按优先级链自动降级，确保始终有一个可用的大模型
 > **最近修复**:
+> - 新增 `--single` flag: 只尝试单个 provider 不级联，供 FreeSubAgent 的跨 worker 锁使用
+> - checkOverlays(): 修掉一处死三元表达式 (`dismissable ? 'error' : 'error'`)
+> - waitForCompletion() 的 stopWaitMode='detached' 分支 (Qwen): 补上已耗时间扣减，避免单 provider 超预算
+> - Claude adapter postResponseHook: 去掉与 minResponseLength:5 矛盾的 30 字符门槛，短回答不再被误杀
+> - telemetry.js 日志轮转 off-by-one: `.2` 之前会被静默覆盖丢失，现在能正确落到 `.3`
 > - Kimi 响应检测: 字符串相等比较 → 元素计数+文本长度增长, 修复同文本不匹配 bug
 > - Kimi 新建会话: 每次调用前点击 `.new-chat-btn` 清空旧 DOM, 避免检测干扰
 > - Kimi 问候语识别: `oldCount===1 && oldText<30chars` → 视为空白页
@@ -157,6 +162,7 @@ node skills/AgentChat-WebExtended/index.js --from=ChatGPT "prompt"
 | `--timeout=N` | 总超时 (ms)，包含所有 provider 尝试时间，默认 600000 |
 | `--timeout-per-provider=N` | 单个 provider 超时 (ms)，默认取 `timeout / 2` 或 180000 |
 | `--from=NAME` | 从指定 provider 开始，跳过链中前面的。NAME 可缩写不区分大小写 |
+| `--single` | 只尝试 `--from` 指定的那一个 provider，失败即返回，不级联到链中后续 provider。给需要自己做跨 provider 降级+加锁的调用方用（如 AgentChat-FreeSubAgent），避免子进程内部级联绕开调用方的互斥锁 |
 | `--smoke` | 环境检查：遍历所有 provider 确认至少一个可达 |
 | `--doctor` | CDP 端口连通性检查 |
 | `--close` / `--close-browser` | 执行完毕后关闭所有 tab 和浏览器连接（默认保留） |

@@ -74,14 +74,20 @@ module.exports = {
             }
         }
 
-        // Reject placeholder-only responses (returns empty → fails minResponseLength)
+        // Reject placeholder-only responses (returns empty → fails minResponseLength downstream).
+        // BUGFIX: previously also rejected anything under 30 chars via `check.length < 30`,
+        // which contradicted this adapter's own `minResponseLength: 5` and silently discarded
+        // legitimate short answers (e.g. a one-word confirmation or a bare number). The
+        // anchored placeholder patterns below already correctly identify placeholder-only
+        // text (they require the ENTIRE trimmed response to match), so the extra length
+        // gate was redundant as well as wrong.
         const placeholderPatterns = [
             /^Thinking\.{0,3}\s*$/i, /^Analyzing\.{0,3}\s*$/i,
             /^Reasoning\.{0,3}\s*$/i, /^思考中\.{0,3}\s*$/i,
             /^分析中\.{0,3}\s*$/i,
         ];
         const check = cleaned.replace(/[\s\n]+/g, ' ').trim();
-        if (placeholderPatterns.some(p => p.test(check)) || check.length < 30) {
+        if (placeholderPatterns.some(p => p.test(check))) {
             return '';
         }
         return cleaned;

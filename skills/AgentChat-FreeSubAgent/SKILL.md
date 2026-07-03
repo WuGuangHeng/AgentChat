@@ -1,7 +1,11 @@
 # Parallel AI Decompose — Thin Orchestrator over AgentChat-WebExtended
 
-> **最后更新**: 2026-07-02
+> **最后更新**: 2026-07-03
 > **核心原则**: Claude Code 拆任务 + 写 prompt → Node.js 并发派发 → 质量门 + 证据仲裁
+> **最近修复 (2026-07-03)**:
+> - callProvider() 现在总是带 `--single` 调用 WebExtended，修掉锁定的 provider 和实际使用的 provider 可能不一致的问题
+> - buildDAG() 的 decomposition 预算补上下限保护 (`Math.max(60000, ...)`)，和 dispatchParallel()/executeWithFallback() 的防御模式对齐
+> - SKILL.md 示例命令 `--timeout=900` 单位错误已修正为 `--timeout=900000`（毫秒）
 > **Provider 层**: 单一源 — `AgentChat-WebExtended` (8 providers, 零代码重复)
 > **v3 重构**: 删除 ~400 行重复 provider 代码，改为 subprocess 调用 AgentChat-WebExtended
 > **🛡 安全策略 (2026-07-02)**: 永远不关闭用户 Chrome。`browser.close()` 已彻底移除，`--keep-tabs` 硬编码为 true。
@@ -86,7 +90,11 @@ Chrome → Gemini / ChatGPT / Claude / Qwen / Kimi / MiniMax / MiMo / DeepSeek
 **默认命令**（4 workers 并发，标签页始终保留）：
 
 ```bash
-node skills/AgentChat-FreeSubAgent/index.js --timeout=900 '<DAG_JSON_STRING>'
+# --timeout 单位是毫秒（与 AgentChat-WebExtended 一致），900000 = 15 分钟，
+# 略高于 WebExtended 默认的 600000（10 分钟），给多 worker 并发留余量。
+# ⚠️ 之前这里错写成 --timeout=900（只有 0.9 秒），M2 阶段有下限保护不会崩，
+# 但 M1 的 DAG 分解会因为预算过小而必然超时，静默退化成规则模板 DAG。
+node skills/AgentChat-FreeSubAgent/index.js --timeout=900000 '<DAG_JSON_STRING>'
 ```
 
 `--keep-tabs` 已硬编码为始终开启（安全策略：永不关闭用户 Chrome），可省略该参数。
@@ -115,6 +123,12 @@ Gemini → ChatGPT → Claude → Qwen → Kimi → MiniMax → MiMo → DeepSee
 FreeSubAgent 层降级链严格遵循 WebExtended 原生顺序，不做优先级重排
 
 降级结果会显式标记在输出中（provider_used ≠ primary_intended）。
+
+**实现细节**：FreeSubAgent 派发给 WebExtended 子进程时始终附带 `--single`（每次子进程只
+尝试 `--from` 指定的那一个 provider，绝不在子进程内部级联到下一个）。跨 provider 的降级
+完全由 FreeSubAgent 自己的 `executeWithFallback()` 循环 + 文件锁（`acquireLock`/
+`releaseLock`）驱动，这样锁定的 provider 和实际被使用的 provider 才能保证一致，避免
+两个并发 worker 同时占用同一个 provider 的浏览器 tab。
 
 Provider 可用性由 AgentChat-WebExtended 管理，详见其 SKILL.md。
 

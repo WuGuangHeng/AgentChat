@@ -129,6 +129,15 @@ function callProvider(prompt, provider, timeoutMs) {
       `--timeout=${timeoutMs}`,
     ];
     spawnArgs.push("--keep-tabs"); // Always — never let child process close tabs
+    // BUGFIX: without --single, WebExtended's --from only sets the starting index —
+    // on failure it cascades through the REST of its own PROVIDER_CHAIN inside this
+    // one subprocess. That meant `provider` (the key we acquireLock()'d above) could
+    // silently differ from the provider actually used, while the lock stayed on
+    // `provider` — breaking mutual exclusion between concurrent DAG-node workers
+    // that expect exclusive use of whatever provider ends up handling their call.
+    // --single makes this an atomic "exactly this one provider" attempt, so our own
+    // executeWithFallback() loop (with its own locking) is the sole fallback layer.
+    spawnArgs.push("--single");
     spawnArgs.push(prompt);
 
     const child = spawn("node", spawnArgs, {
@@ -324,10 +333,16 @@ async function buildDAG(userTask, budgetMs) {
 
   const prompt = DAG_DECOMPOSER_PROMPT.replace("<TASK>", userTask);
 
-  // Try each provider for decomposition
+  // Try each provider for decomposition.
+  // BUGFIX: previously Math.floor(budgetMs * 0.4) had no floor, unlike the budget
+  // math in dispatchParallel()/executeWithFallback() below, which both clamp to a
+  // sane minimum. A misconfigured small --timeout (e.g. a units mistake) collapsed
+  // this to a few hundred ms, guaranteeing every provider times out and silently
+  // degrading to the rule-based fallback DAG below instead of a real decomposition.
+  const perDecomposerBudget = Math.max(60000, Math.floor(budgetMs * 0.4));
   for (const key of FALLBACK_CHAIN) {
     log(`  Decomposer: trying ${key}...`);
-    const result = await callProvider(prompt, key, Math.floor(budgetMs * 0.4));
+    const result = await callProvider(prompt, key, perDecomposerBudget);
     if (!result.ok) { log(`  Decomposer: ${key} failed (${result.reason})`); continue; }
 
     const m = result.text.match(/\{[\s\S]*"dag"[\s\S]*\}/);
@@ -739,4 +754,13 @@ async function main() {
   process.exit(failCount === dag.nodes.length ? 2 : 0);
 }
 
-main().catch(e => { log(`CRITICAL: ${e.message}`); process.exit(4); });
+// BUGFIX: previously called main() unconditionally, so simply require()'ing this
+// file (e.g. from a test, or another script re-using FALLBACK_CHAIN/normalizeAI)
+// would immediately run the CLI: parse process.argv, block on stdin if no prompt
+// was given, spawn subprocesses, and eventually call process.exit(). Guarded to
+// match AgentChat-WebExtended/index.js's existing require.main === module pattern.
+if (require.main === module) {
+    main().catch(e => { log(`CRITICAL: ${e.message}`); process.exit(4); });
+}
+
+module.exports = { FALLBACK_CHAIN, buildFallbackChain, normalizeAI, cleanResponse };

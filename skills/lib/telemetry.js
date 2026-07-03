@@ -20,7 +20,10 @@ function appendWithRotation(filePath, line) {
     try {
         if (fs.existsSync(filePath) && fs.statSync(filePath).size > MAX_TELEMETRY_BYTES) {
             // Shift rotations: .2→.3, .1→.2, file→.1
-            for (let i = MAX_ROTATIONS - 1; i >= 1; i--) {
+            // BUGFIX: was `MAX_ROTATIONS - 1`, which starts the loop one level too
+            // shallow — it only ever did .1→.2 and file→.1, so the oldest rotation
+            // (.2) was silently clobbered instead of being preserved to .3.
+            for (let i = MAX_ROTATIONS; i >= 1; i--) {
                 const oldPath = i === 1 ? filePath : `${filePath}.${i - 1}`;
                 const newPath = `${filePath}.${i}`;
                 try { if (fs.existsSync(oldPath)) fs.renameSync(oldPath, newPath); } catch (_) {}

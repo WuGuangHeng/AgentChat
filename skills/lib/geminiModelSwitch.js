@@ -27,12 +27,6 @@ const MAX_RETRIES = 2;
 function includesExtended(t) {
     return t.includes('延長') || t.includes('延长') || t.includes('扩展') || t.includes('Extended');
 }
-function includesAdvanced(t) {
-    return t.includes('進階') || t.includes('进阶');
-}
-function includesStandard(t) {
-    return t.includes('標準') || t.includes('标准');
-}
 
 // Helper: wait for menu items to have actual text content (Angular CDK overlay fix)
 async function waitForMenuItemsFilled(page, timeoutMs = 5000) {
