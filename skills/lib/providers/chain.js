@@ -20,6 +20,7 @@ const PROVIDER_CHAIN = [
     { key: 'minimax',  name: 'MiniMax',  url: 'https://agent.minimaxi.com/',        authDomains: ['agent.minimaxi.com/login', 'minimax.com/login'] },
     { key: 'mimo',     name: 'MiMo',     url: 'https://aistudio.xiaomimimo.com/',   authDomains: ['aistudio.xiaomimimo.com/login', 'auth0.com'] },
     { key: 'deepseek', name: 'DeepSeek', url: 'https://chat.deepseek.com/',         authDomains: ['chat.deepseek.com/login', 'deepseek.com/login'] },
+    { key: 'doubao',   name: '豆包',    url: 'https://www.doubao.com/',             authDomains: ['www.doubao.com/login', 'doubao.com/login'] },
 ];
 
 module.exports = { PROVIDER_CHAIN };
